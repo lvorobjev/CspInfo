@@ -140,6 +140,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 						pszProvider = new TCHAR[cchProvider + 1];
 						ListBox_GetText(hListBox, uSelectedItem, pszProvider);
 						if (_tcscmp(pszProvider, TEXT("..")) == 0) {
+							SetWindowText(hWnd, WND_TITLE);
 							CspEnumProviders(hListBox);
 							break;
 						}
@@ -193,12 +194,35 @@ void CspEnumProviders(HWND hListBox) {
 
 void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 	HCRYPTPROV hProv;
-	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_MACHINE_KEYSET ))
+	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_VERIFYCONTEXT))
 		throw win32::win32_error("CryptAcquireContext");
 	
 	DWORD cbName;
 	LPBYTE pbName;
 	LPTSTR pszName;
+	
+	if (! CryptGetProvParam(hProv, PP_NAME, NULL, &cbName, 0)) {
+		throw win32::win32_error("CryptGetProvParam");
+	}
+	
+	if (!(pbName = (LPBYTE)LocalAlloc(LMEM_ZEROINIT, cbName)))
+		throw win32::win32_error("LocalAlloc");
+	
+	if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
+		throw win32::win32_error("LocalAlloc");
+	
+	if (! CryptGetProvParam(hProv, PP_NAME, pbName, &cbName, 0)) {
+		throw win32::win32_error("CryptGetProvParam");
+	}
+	
+	MultiByteToWideChar(CP_ACP, 0,
+		(LPCSTR)pbName, -1, pszName, cbName);
+	
+	HWND hWnd = GetParent(hListBox);
+	SetWindowText(hWnd, pszName);
+	
+	LocalFree(pbName);
+	LocalFree(pszName);
 	
 	ListBox_ResetContent(hListBox);
 	ListBox_AddString(hListBox, TEXT(".."));
@@ -235,5 +259,6 @@ void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 	
 	LocalFree(pbName);
 	LocalFree(pszName);
+	
 	CryptReleaseContext(hProv, 0);
 }
