@@ -255,7 +255,11 @@ void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 		MultiByteToWideChar(CP_ACP, 0,
 			(LPCSTR)pbName, -1, pszName, cbName);
 		ListBox_AddString(hListBox, pszName);
-	} while (! CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_NEXT));
+	} while (CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_NEXT));
+	
+	if (GetLastError() != ERROR_NO_MORE_ITEMS) {
+		throw win32::win32_error("CryptGetProvParam");
+	}
 	
 	LocalFree(pbName);
 	LocalFree(pszName);
