@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <wincrypt.h>
 
+#define IDC_LISTBOX  40050
+
 #define WND_TITLE TEXT("Криптопровайдеры")
 #define WND_MENU_NAME NULL
 #define MSG_TITLE TEXT("CspInfo")
@@ -75,10 +77,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 	static LPTSTR lpszBuffer;
 	DWORD dwStatus;
 	
+	static HWND hListBox;
+	RECT rcClient = {0};
+	
 	switch (message) {
       case WM_CREATE:
         hInst = (HINSTANCE) GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
 		lpszBuffer = new TCHAR[BUFFER_SIZE];
+		GetClientRect(hWnd, &rcClient);
+		hListBox = CreateWindow(TEXT("LISTBOX"), NULL, 
+			WS_CHILD | WS_VISIBLE | LBS_STANDARD | LBS_WANTKEYBOARDINPUT, 
+			rcClient.left, rcClient.top, rcClient.right, rcClient.bottom,
+			hWnd, (HMENU) IDC_LISTBOX, hInst, NULL);
+		break;
+	  case WM_SIZE:
+		SetWindowPos(hListBox, HWND_TOP, 0, 0,
+            LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE);
 		break;
 	  case WM_COMMAND:
         switch (LOWORD(wParam)) {
