@@ -105,6 +105,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 	static HWND hListBox;
 	RECT rcClient = {0};
 	
+	static BOOL bListProv;
+	
 	switch (message) {
       case WM_CREATE:
         hInst = (HINSTANCE) GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
@@ -116,6 +118,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 			hWnd, (HMENU) IDC_LISTBOX, hInst, NULL);
 		try {
 			CspEnumProviders(hListBox);
+			bListProv = TRUE;
 		} catch (win32::win32_error& ex) {
 			HANDLE_ERROR(ex.what(), ex.code())
 		}
@@ -130,24 +133,32 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 				HANDLE_ERROR("LBN_ERRSPACE", LBN_ERRSPACE);
 			} else if (HIWORD(wParam) == LBN_DBLCLK) {
 				try {
-					DWORD cchProvider;
-					LPTSTR pszProvider;
+					DWORD cchItemText;
+					LPTSTR pszItemText;
 					DWORD dwProvType;
 					int uSelectedItem;
 					uSelectedItem = ListBox_GetCurSel(hListBox);
 					if (uSelectedItem != LB_ERR) {	
-						cchProvider = ListBox_GetTextLen(hListBox, uSelectedItem);
-						pszProvider = new TCHAR[cchProvider + 1];
-						ListBox_GetText(hListBox, uSelectedItem, pszProvider);
-						if (_tcscmp(pszProvider, TEXT("..")) == 0) {
+						cchItemText = ListBox_GetTextLen(hListBox, uSelectedItem);
+						pszItemText = new TCHAR[cchItemText + 1];
+						ListBox_GetText(hListBox, uSelectedItem, pszItemText);
+						if (_tcscmp(pszItemText, TEXT("..")) == 0) {
 							SetWindowText(hWnd, WND_TITLE);
 							CspEnumProviders(hListBox);
+							bListProv = TRUE;
 							break;
 						}
-						dwProvType = ListBox_GetItemData(hListBox, uSelectedItem);
-						DEBUG_INFO(pszProvider, dwProvType)
-						CspEnumContainers(hListBox, pszProvider, dwProvType);
-						delete pszProvider;
+						if (bListProv) {
+							dwProvType = ListBox_GetItemData(hListBox, uSelectedItem);
+							DEBUG_INFO(pszItemText, dwProvType)
+							CspEnumContainers(hListBox, pszItemText, dwProvType);
+							bListProv = FALSE;
+						} else {
+							// Вывести инф-ю о контейнере ключей
+							_stprintf(lpszBuffer, TEXT("Имя контейнера: %s"), pszItemText);
+							MessageBox(hWnd, lpszBuffer, MSG_TITLE, MB_OK | MB_ICONINFORMATION);
+						}
+						delete pszItemText;
 					}
 				} catch (win32::win32_error& ex) {
 					HANDLE_ERROR(ex.what(), ex.code())
