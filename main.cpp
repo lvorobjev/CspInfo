@@ -146,6 +146,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 						dwProvType = ListBox_GetItemData(hListBox, uSelectedItem);
 						DEBUG_INFO(pszProvider, dwProvType)
 						CspEnumContainers(hListBox, pszProvider, dwProvType);
+						delete pszProvider;
 					}
 				} catch (win32::win32_error& ex) {
 					HANDLE_ERROR(ex.what(), ex.code())
@@ -192,7 +193,7 @@ void CspEnumProviders(HWND hListBox) {
 
 void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 	HCRYPTPROV hProv;
-	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_VERIFYCONTEXT))
+	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_MACHINE_KEYSET ))
 		throw win32::win32_error("CryptAcquireContext");
 	
 	DWORD cbName;
