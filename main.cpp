@@ -5,7 +5,11 @@
  */
 
 #include <windows.h>
+#include <windowsx.h>
 #include <wincrypt.h>
+#include <stdio.h>
+#include <tchar.h>
+#include <win32/win32_error.h>
 
 #define IDC_LISTBOX  40050
 
@@ -23,6 +27,8 @@
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 ATOM RegMyWindowClass(HINSTANCE, LPCTSTR);
+
+void CspEnumProviders(HWND hListBox);
 
 int APIENTRY WinMain(HINSTANCE hInstance,
              HINSTANCE         hPrevInstance,
@@ -83,12 +89,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 	switch (message) {
       case WM_CREATE:
         hInst = (HINSTANCE) GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
-		lpszBuffer = new TCHAR[BUFFER_SIZE];
+		lpszBuffer = (LPTSTR) LocalAlloc(LMEM_ZEROINIT, sizeof(TCHAR)*BUFFER_SIZE);
 		GetClientRect(hWnd, &rcClient);
 		hListBox = CreateWindow(TEXT("LISTBOX"), NULL, 
 			WS_CHILD | WS_VISIBLE | LBS_STANDARD | LBS_WANTKEYBOARDINPUT, 
 			rcClient.left, rcClient.top, rcClient.right, rcClient.bottom,
 			hWnd, (HMENU) IDC_LISTBOX, hInst, NULL);
+		try {
+			CspEnumProviders(hListBox);
+		} catch (win32::win32_error& ex) {
+			HANDLE_ERROR(ex.what(), ex.code())
+		}
 		break;
 	  case WM_SIZE:
 		SetWindowPos(hListBox, HWND_TOP, 0, 0,
@@ -99,11 +110,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 		}
 		break;
 	  case WM_DESTROY:
-        delete lpszBuffer;
+        LocalFree(lpszBuffer);
 		PostQuitMessage(0);
 		break;
 	  default:
         return DefWindowProc(hWnd, message, wParam, lParam);
 	}
 	return 0;
+}
+
+void CspEnumProviders(HWND hListBox) {
+	DWORD dwIndex=0;
+	DWORD dwType;
+	DWORD cbName;
+	LPTSTR pszName;
+
+	while (CryptEnumProviders(dwIndex, NULL, 0, &dwType, NULL, &cbName))
+	{
+	  if (!cbName)
+		break;
+	   
+	  if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
+		throw win32::win32_error("LocalAlloc");
+	  
+	  if (!CryptEnumProviders(dwIndex++, NULL, 0, &dwType, pszName, &cbName))
+		throw win32::win32_error("CryptEnumProviders");
+	  
+	  ListBox_AddString(hListBox, pszName);
+	  
+	  LocalFree(pszName);
+	}
 }
