@@ -2,6 +2,8 @@
  * main.cpp
  * Утилита для просмотра параметров криптопровайдера
  * Copyright (c) 2017 Lev Vorobjev
+ *
+ * THIS IS EXPERIMENTAL SOFTWARE - USE AT YOUR OWN RISK - NO SUPPORT AVAILABLE
  */
 
 #include <windows.h>
@@ -25,10 +27,27 @@
         lpszBuffer, dwStatus); \
     MessageBox(hWnd, lpszBuffer, MSG_TITLE, MB_OK | MB_ICONWARNING);
 
+#ifdef _DEBUG
+#define DEBUG_INFO(pszProvider, dwProvType) \
+    _stprintf(lpszBuffer, TEXT("Provider: %s\nProv Type: %d"), \
+        pszProvider, dwProvType); \
+    MessageBox(hWnd, lpszBuffer, MSG_TITLE, MB_OK | MB_ICONINFORMATION);
+
+#define DEBUG_DUMP(lpData, dwLenght) \
+    for (int i = 0; i < dwLenght; i++) { \
+        _stprintf(lpszBuffer + 3 * i, (i % 16 == 15) ? TEXT("%02X\n") : TEXT("%02X "), ((LPBYTE)lpData)[i]); \
+    } \
+    MessageBox(hWnd, lpszBuffer, MSG_TITLE, MB_OK | MB_ICONINFORMATION);
+#else
+#define DEBUG_INFO(pszProvider, dwProvType)
+#define DEBUG_DUMP(lpData, dwLenght)
+#endif
+	
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 ATOM RegMyWindowClass(HINSTANCE, LPCTSTR);
 
 void CspEnumProviders(HWND hListBox);
+void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType);
 
 int APIENTRY WinMain(HINSTANCE hInstance,
              HINSTANCE         hPrevInstance,
@@ -106,7 +125,32 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
             LOWORD(lParam), HIWORD(lParam), SWP_NOMOVE);
 		break;
 	  case WM_COMMAND:
-        switch (LOWORD(wParam)) {
+        if (LOWORD(wParam) == IDC_LISTBOX) {
+			if(HIWORD(wParam) == (unsigned)LBN_ERRSPACE) {
+				HANDLE_ERROR("LBN_ERRSPACE", LBN_ERRSPACE);
+			} else if (HIWORD(wParam) == LBN_DBLCLK) {
+				try {
+					DWORD cchProvider;
+					LPTSTR pszProvider;
+					DWORD dwProvType;
+					int uSelectedItem;
+					uSelectedItem = ListBox_GetCurSel(hListBox);
+					if (uSelectedItem != LB_ERR) {	
+						cchProvider = ListBox_GetTextLen(hListBox, uSelectedItem);
+						pszProvider = new TCHAR[cchProvider + 1];
+						ListBox_GetText(hListBox, uSelectedItem, pszProvider);
+						if (_tcscmp(pszProvider, TEXT("..")) == 0) {
+							CspEnumProviders(hListBox);
+							break;
+						}
+						dwProvType = ListBox_GetItemData(hListBox, uSelectedItem);
+						DEBUG_INFO(pszProvider, dwProvType)
+						CspEnumContainers(hListBox, pszProvider, dwProvType);
+					}
+				} catch (win32::win32_error& ex) {
+					HANDLE_ERROR(ex.what(), ex.code())
+				}
+			}
 		}
 		break;
 	  case WM_DESTROY:
@@ -124,20 +168,71 @@ void CspEnumProviders(HWND hListBox) {
 	DWORD dwType;
 	DWORD cbName;
 	LPTSTR pszName;
+	DWORD dwItem;
 
+	ListBox_ResetContent(hListBox);
+	
 	while (CryptEnumProviders(dwIndex, NULL, 0, &dwType, NULL, &cbName))
 	{
 	  if (!cbName)
 		break;
 	   
-	  if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
+	  if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName)))
 		throw win32::win32_error("LocalAlloc");
 	  
 	  if (!CryptEnumProviders(dwIndex++, NULL, 0, &dwType, pszName, &cbName))
 		throw win32::win32_error("CryptEnumProviders");
 	  
-	  ListBox_AddString(hListBox, pszName);
+	  dwItem = ListBox_AddString(hListBox, pszName);
+	  ListBox_SetItemData(hListBox, dwItem, dwType);
 	  
 	  LocalFree(pszName);
 	}
+}
+
+void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
+	HCRYPTPROV hProv;
+	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_VERIFYCONTEXT))
+		throw win32::win32_error("CryptAcquireContext");
+	
+	DWORD cbName;
+	LPBYTE pbName;
+	LPTSTR pszName;
+	
+	ListBox_ResetContent(hListBox);
+	ListBox_AddString(hListBox, TEXT(".."));
+	
+	if (! CryptGetProvParam(hProv, PP_ENUMCONTAINERS, NULL, &cbName, CRYPT_FIRST)) {
+		if (GetLastError() == ERROR_NO_MORE_ITEMS) {
+			CryptReleaseContext(hProv, 0);
+			return;
+		}
+		throw win32::win32_error("CryptGetProvParam");
+	}
+	
+	if (!(pbName = (LPBYTE)LocalAlloc(LMEM_ZEROINIT, cbName)))
+		throw win32::win32_error("LocalAlloc");
+	
+	if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
+		throw win32::win32_error("LocalAlloc");
+	
+	if (! CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_FIRST)) {
+		if (GetLastError() == ERROR_NO_MORE_ITEMS) {
+			LocalFree(pbName);
+			LocalFree(pszName);
+			CryptReleaseContext(hProv, 0);
+			return;
+		}
+		throw win32::win32_error("CryptGetProvParam");
+	}
+	
+	do {
+		MultiByteToWideChar(CP_ACP, 0,
+			(LPCSTR)pbName, -1, pszName, cbName);
+		ListBox_AddString(hListBox, pszName);
+	} while (! CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_NEXT));
+	
+	LocalFree(pbName);
+	LocalFree(pszName);
+	CryptReleaseContext(hProv, 0);
 }
