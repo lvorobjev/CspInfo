@@ -46,8 +46,22 @@
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 ATOM RegMyWindowClass(HINSTANCE, LPCTSTR);
 
+typedef struct _KEY_INFO {
+	ALG_ID algId;
+	DWORD dwKeyLen;
+} KEY_INFO;
+
+typedef struct _CONTAINER_INFO {
+	LPTSTR pszProvider;
+	DWORD dwProvType;
+	LPTSTR pszContainer;
+	KEY_INFO kiExchange;
+	KEY_INFO kiSignature;
+} CONTAINER_INFO;
+
 void CspEnumProviders(HWND hListBox);
 void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType);
+void CspContainerDetails(CONTAINER_INFO* pCspi);
 
 int APIENTRY WinMain(HINSTANCE hInstance,
              HINSTANCE         hPrevInstance,
@@ -106,6 +120,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 	RECT rcClient = {0};
 	
 	static BOOL bListProv;
+	static CONTAINER_INFO cspi = {0};
 	
 	switch (message) {
       case WM_CREATE:
@@ -152,10 +167,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 							dwProvType = ListBox_GetItemData(hListBox, uSelectedItem);
 							DEBUG_INFO(pszItemText, dwProvType)
 							CspEnumContainers(hListBox, pszItemText, dwProvType);
+							delete cspi.pszProvider;
+							cspi.pszProvider = _tcsdup(pszItemText);
+							cspi.dwProvType = dwProvType;
 							bListProv = FALSE;
 						} else {
 							// Вывести инф-ю о контейнере ключей
-							_stprintf(lpszBuffer, TEXT("Имя контейнера: %s"), pszItemText);
+							delete cspi.pszContainer;
+							cspi.pszContainer = _tcsdup(pszItemText);
+							CspContainerDetails(&cspi);
+							int i = _stprintf(lpszBuffer, TEXT("Имя контейнера: %s\n"), cspi.pszContainer);
+							if (cspi.kiExchange.algId != 0) {
+								ALG_ID algId = cspi.kiExchange.algId;
+								i += _stprintf(lpszBuffer + i, TEXT("Ключ обмена: %s (%d бит)\n"), (algId & ALG_TYPE_RSA) ? TEXT("RSA") : (algId & ALG_TYPE_DH) ? TEXT("DH") : TEXT("ANY"), cspi.kiExchange.dwKeyLen);
+							}
+							if (cspi.kiSignature.algId != 0) {
+								ALG_ID algId = cspi.kiSignature.algId;
+								i += _stprintf(lpszBuffer + i, TEXT("Ключ подписи: %s (%d бит)\n"), (algId & ALG_TYPE_RSA) ? TEXT("RSA") : (algId & ALG_TYPE_DSS) ? TEXT("DSS") : TEXT("ANY"), cspi.kiSignature.dwKeyLen);
+							}
 							MessageBox(hWnd, lpszBuffer, MSG_TITLE, MB_OK | MB_ICONINFORMATION);
 						}
 						delete pszItemText;
@@ -167,6 +196,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message,
 		}
 		break;
 	  case WM_DESTROY:
+		delete cspi.pszProvider;
+		delete cspi.pszContainer;
         LocalFree(lpszBuffer);
 		PostQuitMessage(0);
 		break;
@@ -203,36 +234,57 @@ void CspEnumProviders(HWND hListBox) {
 	}
 }
 
-void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
-	HCRYPTPROV hProv;
-	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_VERIFYCONTEXT))
-		throw win32::win32_error("CryptAcquireContext");
+LPTSTR CspAsciiToWideChar(LPCSTR pszAscii) {
+	LPTSTR pszWide;
+	DWORD cchWide;
 	
+	cchWide = MultiByteToWideChar(CP_ACP, 0,
+		(LPCSTR)pszAscii, -1, NULL, 0);
+	if (cchWide == 0)
+		throw win32::win32_error("MultiByteToWideChar");
+	
+	if (!(pszWide = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cchWide * sizeof(TCHAR))))
+		throw win32::win32_error("LocalAlloc");
+	
+	cchWide = MultiByteToWideChar(CP_ACP, 0,
+		(LPCSTR)pszAscii, -1, pszWide, cchWide);
+	if (cchWide == 0)
+		throw win32::win32_error("MultiByteToWideChar");
+	
+	return pszWide;
+}
+
+LPTSTR CspGetProviderName(HCRYPTPROV hProv) {
 	DWORD cbName;
 	LPBYTE pbName;
 	LPTSTR pszName;
 	
-	if (! CryptGetProvParam(hProv, PP_NAME, NULL, &cbName, 0)) {
+	if (! CryptGetProvParam(hProv, PP_NAME, NULL, &cbName, 0))
 		throw win32::win32_error("CryptGetProvParam");
-	}
 	
 	if (!(pbName = (LPBYTE)LocalAlloc(LMEM_ZEROINIT, cbName)))
 		throw win32::win32_error("LocalAlloc");
 	
-	if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
-		throw win32::win32_error("LocalAlloc");
-	
-	if (! CryptGetProvParam(hProv, PP_NAME, pbName, &cbName, 0)) {
+	if (! CryptGetProvParam(hProv, PP_NAME, pbName, &cbName, 0))
 		throw win32::win32_error("CryptGetProvParam");
-	}
 	
-	MultiByteToWideChar(CP_ACP, 0,
-		(LPCSTR)pbName, -1, pszName, cbName);
+	pszName = CspAsciiToWideChar((LPCSTR)pbName);
+	LocalFree(pbName);
+	return pszName;
+}
+
+void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
+	HCRYPTPROV hProv;
+	DWORD cbName;
+	LPBYTE pbName;
+	LPTSTR pszName;
 	
+	if (! CryptAcquireContext(&hProv, NULL, pszProvider, dwProvType, CRYPT_VERIFYCONTEXT))
+		throw win32::win32_error("CryptAcquireContext");
+	
+	pszName = CspGetProviderName(hProv);
 	HWND hWnd = GetParent(hListBox);
 	SetWindowText(hWnd, pszName);
-	
-	LocalFree(pbName);
 	LocalFree(pszName);
 	
 	ListBox_ResetContent(hListBox);
@@ -246,16 +298,14 @@ void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 		throw win32::win32_error("CryptGetProvParam");
 	}
 	
-	if (!(pbName = (LPBYTE)LocalAlloc(LMEM_ZEROINIT, cbName)))
+	if (!(pbName = (LPBYTE)LocalAlloc(LMEM_ZEROINIT, cbName))) {
+		CryptReleaseContext(hProv, 0);
 		throw win32::win32_error("LocalAlloc");
-	
-	if (!(pszName = (LPTSTR)LocalAlloc(LMEM_ZEROINIT, cbName * sizeof(TCHAR))))
-		throw win32::win32_error("LocalAlloc");
+	}
 	
 	if (! CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_FIRST)) {
 		if (GetLastError() == ERROR_NO_MORE_ITEMS) {
 			LocalFree(pbName);
-			LocalFree(pszName);
 			CryptReleaseContext(hProv, 0);
 			return;
 		}
@@ -263,17 +313,78 @@ void CspEnumContainers(HWND hListBox, LPCTSTR pszProvider, DWORD dwProvType) {
 	}
 	
 	do {
-		MultiByteToWideChar(CP_ACP, 0,
-			(LPCSTR)pbName, -1, pszName, cbName);
+		pszName = CspAsciiToWideChar((LPCSTR)pbName);
 		ListBox_AddString(hListBox, pszName);
+		LocalFree(pszName);
 	} while (CryptGetProvParam(hProv, PP_ENUMCONTAINERS, pbName, &cbName, CRYPT_NEXT));
 	
 	if (GetLastError() != ERROR_NO_MORE_ITEMS) {
+		LocalFree(pbName);
+		CryptReleaseContext(hProv, 0);
 		throw win32::win32_error("CryptGetProvParam");
 	}
 	
 	LocalFree(pbName);
-	LocalFree(pszName);
+	CryptReleaseContext(hProv, 0);
+}
+
+void CspRetrieveKeyInfo(HCRYPTKEY hKey, KEY_INFO* pKi) {
+	DWORD dwDataLen;
+	
+	dwDataLen = sizeof(ALG_ID);
+	if (! CryptGetKeyParam(hKey, KP_ALGID, 
+		(BYTE*) &(pKi->algId), &dwDataLen, 0)) {
+		throw win32::win32_error("CryptGetKeyParam");
+	}
+	
+	dwDataLen = sizeof(DWORD);
+	if (! CryptGetKeyParam(hKey, KP_KEYLEN,
+		(BYTE*) &(pKi->dwKeyLen), &dwDataLen, 0)) {
+		throw win32::win32_error("CryptGetKeyParam");
+	}
+}
+
+void CspContainerDetails(CONTAINER_INFO* pCspi) {
+	HCRYPTPROV hProv;
+	HCRYPTKEY hKeyExch;
+	HCRYPTKEY hKeySign;
+	DWORD dwStatus;
+	
+	if (! CryptAcquireContext(&hProv, pCspi->pszContainer, 
+		pCspi->pszProvider, pCspi->dwProvType, 0))
+		throw win32::win32_error("CryptAcquireContext");
+	
+	if (! CryptGetUserKey(hProv, AT_KEYEXCHANGE, &hKeyExch)) {
+		dwStatus = GetLastError();
+		if (dwStatus == NTE_NO_KEY || dwStatus == NTE_BAD_ALGID) {
+			pCspi->kiExchange.algId = 0;
+			hKeyExch = NULL;
+		} else {
+			CryptReleaseContext(hProv, 0);
+			throw win32::win32_error("CryptGetUserKey", dwStatus);
+		}
+	}
+	
+	if (hKeyExch != NULL) {
+		CspRetrieveKeyInfo(hKeyExch, &(pCspi->kiExchange));
+		CryptDestroyKey(hKeyExch);
+	}
+	
+	if (! CryptGetUserKey(hProv, AT_SIGNATURE, &hKeySign)) {
+		dwStatus = GetLastError();
+		if (dwStatus == NTE_NO_KEY || dwStatus == NTE_BAD_ALGID) {
+			pCspi->kiSignature.algId = 0;
+			hKeySign = NULL;
+		} else {
+			CryptReleaseContext(hProv, 0);
+			throw win32::win32_error("CryptGetUserKey", dwStatus);
+		}
+	}
+	
+	if (hKeySign != NULL) {
+		CspRetrieveKeyInfo(hKeySign, &(pCspi->kiSignature));
+		CryptDestroyKey(hKeySign);
+	}
 	
 	CryptReleaseContext(hProv, 0);
 }
