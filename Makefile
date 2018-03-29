@@ -8,12 +8,13 @@ RESC = $(subst .rc,.res,$(RES))
 
 INCLUDES = -I../../../SP/KP/include -I../../Lab4/src
 DEFINES = -D_UNICODE -DUNICODE
-CFLAGS = -std=c++11 -g
+CFLAGS = -std=c++11 -g -O2 -flto
+CLFLAGS = -static -s -Wl,--gc-sections
 
 all: ${TARGET}
 
 ${TARGET}: ${OBJS} ${RESC}
-	g++ -mwindows -o $@ $^
+	g++ ${CLFLAGS} -mwindows -o $@ $^
 
 %.o: %.cpp ${HDRS}
 	g++ ${DEFINES} ${CFLAGS} ${INCLUDES} -c -o $@ $<
